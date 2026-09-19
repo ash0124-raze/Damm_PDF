@@ -13,7 +13,7 @@ cors_configuration = {
     'CORSRules': [{
         'AllowedHeaders': ['*'],
         'AllowedMethods': ['PUT', 'POST', 'GET', 'HEAD'],
-        'AllowedOrigins': ['*'], # Allows any frontend URL
+        'AllowedOrigins': ['https://dammpdf.vercel.app/'], # Allows any frontend URL
         'ExposeHeaders': ['ETag'],
         'MaxAgeSeconds': 3600
     }]
