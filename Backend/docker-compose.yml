@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: damm_pdf_api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Syncs your local code to the container so you don't have to rebuild on every change
+      - .:/app 
+
+  worker:
+    build: .
+    container_name: damm_pdf_worker
+    command: celery -A worker.queue.celery_app worker -l info -P solo
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    depends_on:
+      - api
+
+  frontend:
+    build: ../frontend  # Ensure this matches your actual frontend folder name
+    container_name: damm_pdf_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules  # Crucial: Prevents Windows from overwriting the Linux node_modules
+      - /app/.next
+    depends_on:
+      - api
