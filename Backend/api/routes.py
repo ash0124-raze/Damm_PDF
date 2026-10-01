@@ -12,7 +12,13 @@ from fastapi import UploadFile, File, HTTPException
 import os
 import uuid
 from worker.tasks import merge_pdfs_task # Adjust this import path if needed
-
+from services.rag import (
+    extract_and_chunk_pdf, 
+    get_embeddings, 
+    find_relevant_chunks, 
+    get_ai_client,  # <-- Add get_ai_client right here
+    safe_generate
+)
 router = APIRouter()
 
 # Initialize the S3/R2 Client
@@ -471,6 +477,235 @@ async def encrypt_pdf_endpoint(
         "job_id": task.id,
         "task_type": "encrypt"
     }
+
+# import os
+# from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+# from services.rag import extract_and_chunk_pdf, get_embeddings, find_relevant_chunks
+# from google import genai
+
+# router = APIRouter()
+# ai_client = genai.Client()
+
+# @router.post("/rag-chat")
+# async def rag_chat(file: UploadFile = File(...), question: str = Form(...)):
+#     if not file.filename.lower().endswith(".pdf"):
+#         raise HTTPException(status_code=400, detail="File must be a PDF.")
+
+#     temp_path = f"temp_{file.filename}"
+#     with open(temp_path, "wb") as f:
+#         f.write(await file.read())
+
+#     try:
+#         # Step 1: Chunk the PDF text
+#         chunks = extract_and_chunk_pdf(temp_path)
+#         if not chunks:
+#             raise HTTPException(status_code=400, detail="No readable text found in PDF.")
+
+#         # Step 2: Generate Vector Embeddings for all chunks
+#         chunk_embeddings = get_embeddings(chunks)
+
+#         # Step 3: Vector Search (Find top 3 most relevant paragraphs)
+#         relevant_chunks = find_relevant_chunks(question, chunks, chunk_embeddings, top_k=3)
+#         context = "\n\n---\n\n".join(relevant_chunks)
+
+#         # Step 4: RAG Generation (Pass only relevant context to Gemini)
+#         prompt = (
+#             f"You are a precise document assistant. Answer the user's question using "
+#             f"ONLY the provided context snippet below. If the answer is not in the context, "
+#             f"state 'I cannot find that information in the document.'\n\n"
+#             f"CONTEXT CHUNKS:\n{context}\n\n"
+#             f"USER QUESTION: {question}"
+#         )
+
+#         response = ai_client.models.generate_content(
+#             model="gemini-2.5-flash",
+#             contents=prompt,
+#         )
+
+#         return {
+#             "answer": response.text,
+#             "sources_used": len(relevant_chunks)
+#         }
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"RAG error: {str(e)}")
+#     finally:
+#         if os.path.exists(temp_path):
+#             os.remove(temp_path)
+import os
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from services.rag import extract_and_chunk_pdf, get_embeddings, find_relevant_chunks
+from google import genai
+
+router = APIRouter()
+# ai_client = genai.Client()
+
+@router.post("/rag-chat")
+async def rag_chat(file: UploadFile = File(...), question: str = Form(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File must be a PDF.")
+
+    temp_dir = "temp_uploads"
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"rag_{file.filename}")
+    
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
+
+    try:
+        ai_client = get_ai_client()
+        # 1. Chunk the PDF text
+        chunks = extract_and_chunk_pdf(temp_path)
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No readable text found in PDF.")
+
+        # 2. Generate Vector Embeddings for all chunks
+        chunk_embeddings = get_embeddings(chunks)
+
+        # 3. Vector Search (Find top 3 most relevant paragraphs)
+        relevant_chunks = find_relevant_chunks(question, chunks, chunk_embeddings, top_k=3)
+        context = "\n\n---\n\n".join(relevant_chunks)
+
+        # 4. RAG Generation (Pass only relevant context to Gemini)
+        prompt = (
+            f"You are a precise document assistant. Answer the user's question using "
+            f"ONLY the provided context snippet below. If the answer is not in the context, "
+            f"state 'I cannot find that information in the document.'\n\n"
+            f"CONTEXT CHUNKS:\n{context}\n\n"
+            f"USER QUESTION: {question}"
+        )
+
+        response = ai_client.models.generate_content(
+            model="gemini-3.8-flash",  # Safe, stable model ID for free tier
+            contents=prompt,
+        )
+
+        return {
+            "answer": response.text,
+            "sources_used": len(relevant_chunks)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG error: {str(e)}")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+import os
+from fastapi import APIRouter, File, UploadFile, HTTPException
+from pypdf import PdfReader
+from services.rag import get_ai_client, safe_generate
+
+router = APIRouter()
+@router.post("/summarize")
+async def summarize_pdf(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File must be a PDF.")
+
+    temp_dir = "temp_uploads"
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"summary_{file.filename}")
+    
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
+
+    try:
+        # Extract text from PDF
+        reader = PdfReader(temp_path)
+        full_text = ""
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                full_text += text + "\n"
+
+        if not full_text.strip():
+            raise HTTPException(status_code=400, detail="No readable text found in PDF.")
+
+        # Truncate text if it's exceptionally massive to fit context window efficiently
+        truncated_text = full_text[:40000]
+
+        ai_client = get_ai_client()
+        prompt = (
+            "You are an expert document analyst. Analyze the following document text and provide:\n"
+            "1. **Executive Summary** (2-3 sentences overview)\n"
+            "2. **Key Takeaways** (Bullet points of the most critical facts or findings)\n"
+            "3. **Target Audience / Purpose** (Who is this for and why was it written?)\n\n"
+            f"DOCUMENT TEXT:\n{truncated_text}"
+        )
+
+        response = safe_generate(
+            client=ai_client,
+            model="gemini-3.8-flash",
+            contents=prompt
+        )
+
+        return {
+            "filename": file.filename,
+            "summary": response.text
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+# import traceback
+
+# @router.post("/rag-chat")
+# async def rag_chat(file: UploadFile = File(...), question: str = Form(...)):
+#     if not file.filename.lower().endswith(".pdf"):
+#         raise HTTPException(status_code=400, detail="File must be a PDF.")
+
+#     temp_dir = "temp_uploads"
+#     os.makedirs(temp_dir, exist_ok=True)
+#     temp_path = os.path.join(temp_dir, f"rag_{file.filename}")
+    
+#     with open(temp_path, "wb") as f:
+#         f.write(await file.read())
+
+#     try:
+#         ai_client = get_ai_client()
+
+#         chunks = extract_and_chunk_pdf(temp_path)
+#         if not chunks:
+#             raise HTTPException(status_code=400, detail="No readable text found in PDF.")
+
+#         chunk_embeddings = get_embeddings(chunks)
+#         relevant_chunks = find_relevant_chunks(question, chunks, chunk_embeddings, top_k=3)
+#         context = "\n\n---\n\n".join(relevant_chunks)
+
+#         prompt = (
+#             f"You are a precise document assistant. Answer the user's question using "
+#             f"ONLY the provided context snippet below. If the answer is not in the context, "
+#             f"state 'I cannot find that information in the document.'\n\n"
+#             f"CONTEXT CHUNKS:\n{context}\n\n"
+#             f"USER QUESTION: {question}"
+#         )
+
+#         # response = ai_client.models.generate_content(
+#         #     model="gemini-3.5-flash",
+#         #     contents=prompt,
+#         # )
+#         response = safe_generate(
+#             client=ai_client,
+#             model="gemini-3.8-flash",  # Using a reliable standard flash model
+#             contents=prompt
+#             )
+
+#         return {
+#             "answer": response.text,
+#             "sources_used": len(relevant_chunks)
+#         }
+
+#     except Exception as e:
+#         # This will print the full traceback to your console AND send it back in the response
+#         err_details = traceback.format_exc()
+#         print(err_details)
+#         raise HTTPException(status_code=500, detail=err_details)
+#     finally:
+#         if os.path.exists(temp_path):
+#             os.remove(temp_path)
 # import os
 # import uuid
 # import boto3

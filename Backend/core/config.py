@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str
     S3_BUCKET_NAME: str
     S3_ENDPOINT_URL: str
+    # Gemini 
+    GEMINI_API_KEY: str
     model_config = SettingsConfigDict(env_file=".env")
 
 
