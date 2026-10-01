@@ -69,6 +69,15 @@ app.mount("/download", StaticFiles(directory="processed_files"), name="download"
 
 # Register your routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
+print("\n========== REGISTERED ROUTES ==========")
+
+for route in app.routes:
+    print(
+        getattr(route, "methods", None),
+        getattr(route, "path", None)
+    )
+
+print("=======================================\n")
 
 @app.get("/")
 def read_root():

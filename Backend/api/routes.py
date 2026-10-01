@@ -19,6 +19,15 @@ from services.rag import (
     get_ai_client,  # <-- Add get_ai_client right here
     safe_generate
 )
+
+import os
+from fastapi import APIRouter, File, UploadFile, HTTPException
+from pypdf import PdfReader
+from services.rag import get_ai_client, safe_generate
+# import os
+# from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from services.rag import extract_and_chunk_pdf, get_embeddings, find_relevant_chunks
+from google import genai
 router = APIRouter()
 
 # Initialize the S3/R2 Client
@@ -532,12 +541,9 @@ async def encrypt_pdf_endpoint(
 #     finally:
 #         if os.path.exists(temp_path):
 #             os.remove(temp_path)
-import os
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from services.rag import extract_and_chunk_pdf, get_embeddings, find_relevant_chunks
-from google import genai
 
-router = APIRouter()
+
+# router = APIRouter()
 # ai_client = genai.Client()
 
 @router.post("/rag-chat")
@@ -592,12 +598,8 @@ async def rag_chat(file: UploadFile = File(...), question: str = Form(...)):
             os.remove(temp_path)
 
 
-import os
-from fastapi import APIRouter, File, UploadFile, HTTPException
-from pypdf import PdfReader
-from services.rag import get_ai_client, safe_generate
 
-router = APIRouter()
+# router = APIRouter()
 @router.post("/summarize")
 async def summarize_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
